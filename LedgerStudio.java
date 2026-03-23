@@ -102,6 +102,23 @@ public final class LedgerStudio {
                 "api_ledger.api_stream " +
                 "restart identity cascade";
 
+        private static final String AMBIGUITY_SNAPSHOT_SQL =
+                "select s.stream_code, o.object_kind, o.object_key, a.governing_thread_count " +
+                "from api_ledger.v_ambiguous_object a " +
+                "join api_ledger.api_stream s on s.stream_id = a.stream_id " +
+                "join api_ledger.api_object o on o.object_id = a.object_id " +
+                "order by o.object_kind, o.object_key";
+
+        private static final String DEMO_SEED_SQL =
+                "insert into api_ledger.api_stream(stream_code, stream_title) values ('API', 'API Stream'); " +
+                "insert into api_ledger.api_participant(participant_code, display_name) values ('ALICE', 'Alice'); " +
+                "insert into api_ledger.api_object(stream_id, object_kind, object_key, object_name) " +
+                "select stream_id, 'ENDPOINT', 'EP_HELLO', 'Hello Endpoint' " +
+                "from api_ledger.api_stream where stream_code = 'API'; " +
+                "insert into api_ledger.api_object(stream_id, object_kind, object_key, object_name) " +
+                "select stream_id, 'PARAMETER', 'P_NAME', 'Name Parameter' " +
+                "from api_ledger.api_stream where stream_code = 'API';";
+
         private final Scanner scanner = new Scanner(System.in);
         private Connection connection;
 
@@ -222,6 +239,11 @@ public final class LedgerStudio {
                 handleDemo();
                 return true;
             }
+            if (matches(line, "demo-all")) {
+                requireConnection();
+                handleDemoAll();
+                return true;
+            }
             if (matches(line, "verify")) {
                 requireConnection();
                 handleVerify();
@@ -263,7 +285,9 @@ public final class LedgerStudio {
                 throw new UnsupportedOperationException("The relate command is not installed in this repo yet.");
             }
             if (line.toLowerCase(Locale.ROOT).startsWith("supersede ")) {
-                throw new UnsupportedOperationException("The supersede command is not installed in this repo yet.");
+                requireConnection();
+                handleRecordSupersede(line);
+                return true;
             }
 
             System.out.println("Unknown command. Type 'help'.");
@@ -297,6 +321,7 @@ public final class LedgerStudio {
             System.out.println("diagnostics");
             System.out.println("reset");
             System.out.println("demo");
+            System.out.println("demo-all");
             System.out.println("run-scenario <scenario-name>");
             System.out.println("verify");
             System.out.println("run-file <path-to-sql-file>");
@@ -307,6 +332,7 @@ public final class LedgerStudio {
             System.out.println("commit <stream_code> <participant_code> <object_kind> <object_key>");
             System.out.println("fulfill <stream_code> <participant_code> <thread_id>");
             System.out.println("restart <stream_code> <participant_code> <thread_id>");
+            System.out.println("supersede <stream_code> <participant_code> <superseding_thread_id> <superseded_thread_id>");
             System.out.println();
             System.out.println("exit");
             System.out.println("quit");
@@ -431,6 +457,69 @@ public final class LedgerStudio {
             handleReset();
             runScenario(resolveScenarioPath("scenario01"), true, false);
             handleVerify();
+            System.out.println("\nGoverning snapshot:");
+            printQuery(GOVERNING_SNAPSHOT_SQL);
+        }
+
+        private void handleDemoAll() throws Exception {
+            handleReset();
+            installDemoSeed();
+
+            System.out.println("\n== Acceptance ==");
+            printAction("commit API ALICE ENDPOINT EP_HELLO");
+            handleRecordCommit("commit API ALICE ENDPOINT EP_HELLO");
+            printAction("fulfill API ALICE 1");
+            handleRecordFulfill("fulfill API ALICE 1");
+            printNarrativeState();
+
+            System.out.println("\n== Restart Disappearance ==");
+            printAction("restart API ALICE 1");
+            handleRecordRestart("restart API ALICE 1");
+            printNarrativeState();
+
+            System.out.println("\n== Competing Ambiguity ==");
+            printAction("commit API ALICE ENDPOINT EP_HELLO");
+            handleRecordCommit("commit API ALICE ENDPOINT EP_HELLO");
+            printAction("fulfill API ALICE 2");
+            handleRecordFulfill("fulfill API ALICE 2");
+            printAction("commit API ALICE ENDPOINT EP_HELLO");
+            handleRecordCommit("commit API ALICE ENDPOINT EP_HELLO");
+            printAction("fulfill API ALICE 3");
+            handleRecordFulfill("fulfill API ALICE 3");
+            printNarrativeState();
+
+            System.out.println("\n== Supersession Resolution ==");
+            printAction("supersede API ALICE 2 3");
+            handleRecordSupersede("supersede API ALICE 2 3");
+            printNarrativeState();
+
+            System.out.println("\n== Strict Redefinition ==");
+            printAction("commit API ALICE ENDPOINT EP_HELLO");
+            handleRecordCommit("commit API ALICE ENDPOINT EP_HELLO");
+            printAction("fulfill API ALICE 4");
+            handleRecordFulfill("fulfill API ALICE 4");
+            printAction("supersede API ALICE 4 2");
+            handleRecordSupersede("supersede API ALICE 4 2");
+            printNarrativeState();
+
+            System.out.println("\nFinal verification:");
+            handleVerify();
+            System.out.println("\nStory complete.");
+        }
+
+        private void installDemoSeed() throws SQLException {
+            executeSqlScript(DEMO_SEED_SQL);
+        }
+
+        private void printAction(String action) {
+            System.out.println("\nAction: " + action);
+        }
+
+        private void printNarrativeState() throws SQLException {
+            System.out.println("\nLifecycle summary:");
+            printQuery(THREAD_SUMMARY_SQL);
+            System.out.println("\nAmbiguity snapshot:");
+            printQuery(AMBIGUITY_SNAPSHOT_SQL);
             System.out.println("\nGoverning snapshot:");
             printQuery(GOVERNING_SNAPSHOT_SQL);
         }
@@ -585,6 +674,29 @@ public final class LedgerStudio {
                 ps.setString(1, streamCode);
                 ps.setString(2, participantCode);
                 ps.setLong(3, threadId);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    printResultSet(rs);
+                }
+            }
+        }
+
+
+        private void handleRecordSupersede(String line) throws SQLException {
+            String[] parts = splitArgs(line, 5);
+            String streamCode = parts[1];
+            String participantCode = parts[2];
+            long supersedingThreadId = parseLong(parts[3], "superseding_thread_id");
+            long supersededThreadId = parseLong(parts[4], "superseded_thread_id");
+
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "select act_id, act_seq, thread_supersession_id " +
+                    "from api_ledger.record_supersede(?, ?, ?, ?)"
+            )) {
+                ps.setString(1, streamCode);
+                ps.setString(2, participantCode);
+                ps.setLong(3, supersedingThreadId);
+                ps.setLong(4, supersededThreadId);
 
                 try (ResultSet rs = ps.executeQuery()) {
                     printResultSet(rs);

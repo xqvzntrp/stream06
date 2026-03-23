@@ -216,3 +216,125 @@ begin
     return next;
 end;
 $$;
+
+
+------------------------------------------------------------------------------
+-- record_supersede
+------------------------------------------------------------------------------
+
+create or replace function record_supersede(
+    p_stream_code text,
+    p_participant_code text,
+    p_superseding_thread_id bigint,
+    p_superseded_thread_id bigint
+)
+returns table (
+    act_id bigint,
+    act_seq bigint,
+    thread_supersession_id bigint
+)
+language plpgsql
+as $$
+declare
+    v_stream_id bigint;
+    v_participant_id bigint;
+    v_next_seq bigint;
+    v_superseding_stream_id bigint;
+    v_superseded_stream_id bigint;
+    v_superseding_object_id bigint;
+    v_superseded_object_id bigint;
+    v_superseding_closure_type text;
+    v_superseded_closure_type text;
+begin
+
+    select stream_id into v_stream_id
+    from api_stream
+    where stream_code = upper(p_stream_code);
+
+    if v_stream_id is null then
+        raise exception 'unknown stream';
+    end if;
+
+    select participant_id into v_participant_id
+    from api_participant
+    where participant_code = upper(p_participant_code);
+
+    if v_participant_id is null then
+        raise exception 'unknown participant';
+    end if;
+
+    select stream_id, object_id, closure_type
+    into v_superseding_stream_id, v_superseding_object_id, v_superseding_closure_type
+    from api_thread
+    where thread_id = p_superseding_thread_id
+    for update;
+
+    if v_superseding_object_id is null then
+        raise exception 'unknown superseding thread';
+    end if;
+
+    select stream_id, object_id, closure_type
+    into v_superseded_stream_id, v_superseded_object_id, v_superseded_closure_type
+    from api_thread
+    where thread_id = p_superseded_thread_id
+    for update;
+
+    if v_superseded_object_id is null then
+        raise exception 'unknown superseded thread';
+    end if;
+
+    if v_superseding_stream_id <> v_stream_id
+       or v_superseded_stream_id <> v_stream_id then
+        raise exception 'threads do not belong to stream';
+    end if;
+
+    if v_superseding_object_id <> v_superseded_object_id then
+        raise exception 'threads govern different objects';
+    end if;
+
+    if v_superseding_closure_type <> 'FULFILL'
+       or v_superseded_closure_type <> 'FULFILL' then
+        raise exception 'supersession requires accepted threads';
+    end if;
+
+    perform 1 from api_stream where stream_id = v_stream_id for update;
+
+    select coalesce(max(a.act_seq),0)+1
+    into v_next_seq
+    from api_act a
+    where a.stream_id = v_stream_id;
+
+    insert into api_act(
+        stream_id, participant_id, object_id,
+        act_seq, act_type, thread_id, payload_json
+    )
+    values(
+        v_stream_id,
+        v_participant_id,
+        v_superseding_object_id,
+        v_next_seq,
+        'SUPERSEDE',
+        p_superseding_thread_id,
+        jsonb_build_object('superseded_thread_id', p_superseded_thread_id)
+    )
+    returning api_act.act_id, api_act.act_seq
+    into act_id, act_seq;
+
+    insert into api_thread_supersession(
+        stream_id,
+        superseding_thread_id,
+        superseded_thread_id,
+        created_by_act_id
+    )
+    values(
+        v_stream_id,
+        p_superseding_thread_id,
+        p_superseded_thread_id,
+        act_id
+    )
+    returning api_thread_supersession.thread_supersession_id
+    into thread_supersession_id;
+
+    return next;
+end;
+$$;
