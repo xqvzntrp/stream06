@@ -271,6 +271,11 @@ public final class LedgerStudio {
                 handleRecordCommit(line);
                 return true;
             }
+            if (line.toLowerCase(Locale.ROOT).startsWith("attribute ")) {
+                requireConnection();
+                handleRecordAttribute(line);
+                return true;
+            }
             if (line.toLowerCase(Locale.ROOT).startsWith("fulfill ")) {
                 requireConnection();
                 handleRecordFulfill(line);
@@ -332,6 +337,7 @@ public final class LedgerStudio {
             System.out.println("Procedure wrappers");
             System.out.println("------------------");
             System.out.println("commit <stream_code> <participant_code> <object_kind> <object_key>");
+            System.out.println("attribute <stream_code> <participant_code> <thread_id> <object_kind> <object_key> <attr_name> <attr_value> [value_type]");
             System.out.println("fulfill <stream_code> <participant_code> <thread_id>");
             System.out.println("restart <stream_code> <participant_code> <thread_id>");
             System.out.println("relate <stream_code> <participant_code> <thread_id> <source_kind> <source_key> <relation_type> <target_kind> <target_key> [ordinal_no]");
@@ -637,6 +643,47 @@ public final class LedgerStudio {
                 ps.setString(2, participantCode);
                 ps.setString(3, objectKind);
                 ps.setString(4, objectKey);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    printResultSet(rs);
+                }
+            }
+        }
+
+
+        private void handleRecordAttribute(String line) throws SQLException {
+            String[] parts = line.trim().split("\s+");
+            if (parts.length != 8 && parts.length != 9) {
+                throw new IllegalArgumentException(
+                        "Usage: attribute <stream_code> <participant_code> <thread_id> <object_kind> <object_key> <attr_name> <attr_value> [value_type]"
+                );
+            }
+
+            String streamCode = parts[1];
+            String participantCode = parts[2];
+            long threadId = parseLong(parts[3], "thread_id");
+            String objectKind = parts[4];
+            String objectKey = parts[5];
+            String attrName = parts[6];
+            String attrValue = parts[7];
+            String valueType = (parts.length == 9) ? parts[8] : null;
+
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "select object_attr_id, created_by_act_id, act_seq " +
+                    "from api_ledger.record_attribute(?, ?, ?, ?, ?, ?, ?, ?)"
+            )) {
+                ps.setString(1, streamCode);
+                ps.setString(2, participantCode);
+                ps.setLong(3, threadId);
+                ps.setString(4, objectKind);
+                ps.setString(5, objectKey);
+                ps.setString(6, attrName);
+                ps.setString(7, attrValue);
+                if (valueType == null) {
+                    ps.setNull(8, java.sql.Types.VARCHAR);
+                } else {
+                    ps.setString(8, valueType);
+                }
 
                 try (ResultSet rs = ps.executeQuery()) {
                     printResultSet(rs);

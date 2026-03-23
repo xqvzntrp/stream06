@@ -124,7 +124,8 @@ create table api_act (
             'FULFILL',
             'RESTART',
             'SUPERSEDE',
-            'RELATE'
+            'RELATE',
+            'ATTRIBUTE'
         ))
 );
 

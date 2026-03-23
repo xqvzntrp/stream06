@@ -44,11 +44,19 @@ begin
     from api_participant
     where participant_code = upper(p_participant_code);
 
+    if v_participant_id is null then
+        raise exception 'unknown participant';
+    end if;
+
     select object_id into v_object_id
     from api_object
     where stream_id = v_stream_id
       and object_kind = upper(p_object_kind)
       and object_key = upper(p_object_key);
+
+    if v_object_id is null then
+        raise exception 'unknown object';
+    end if;
 
     perform 1 from api_stream where stream_id = v_stream_id for update;
 
@@ -109,7 +117,9 @@ as $$
 declare
     v_stream_id bigint;
     v_participant_id bigint;
+    v_thread_stream_id bigint;
     v_object_id bigint;
+    v_closure_type text;
     v_next_seq bigint;
 begin
 
@@ -117,14 +127,35 @@ begin
     from api_stream
     where stream_code = upper(p_stream_code);
 
+    if v_stream_id is null then
+        raise exception 'unknown stream';
+    end if;
+
     select participant_id into v_participant_id
     from api_participant
     where participant_code = upper(p_participant_code);
 
-    select object_id into v_object_id
+    if v_participant_id is null then
+        raise exception 'unknown participant';
+    end if;
+
+    select stream_id, object_id, closure_type
+    into v_thread_stream_id, v_object_id, v_closure_type
     from api_thread
     where thread_id = p_thread_id
     for update;
+
+    if v_object_id is null then
+        raise exception 'unknown thread';
+    end if;
+
+    if v_thread_stream_id <> v_stream_id then
+        raise exception 'thread does not belong to stream';
+    end if;
+
+    if v_closure_type is not null then
+        raise exception 'thread is already closed';
+    end if;
 
     perform 1 from api_stream where stream_id = v_stream_id for update;
 
@@ -172,7 +203,9 @@ as $$
 declare
     v_stream_id bigint;
     v_participant_id bigint;
+    v_thread_stream_id bigint;
     v_object_id bigint;
+    v_closure_type text;
     v_next_seq bigint;
 begin
 
@@ -180,14 +213,35 @@ begin
     from api_stream
     where stream_code = upper(p_stream_code);
 
+    if v_stream_id is null then
+        raise exception 'unknown stream';
+    end if;
+
     select participant_id into v_participant_id
     from api_participant
     where participant_code = upper(p_participant_code);
 
-    select object_id into v_object_id
+    if v_participant_id is null then
+        raise exception 'unknown participant';
+    end if;
+
+    select stream_id, object_id, closure_type
+    into v_thread_stream_id, v_object_id, v_closure_type
     from api_thread
     where thread_id = p_thread_id
     for update;
+
+    if v_object_id is null then
+        raise exception 'unknown thread';
+    end if;
+
+    if v_thread_stream_id <> v_stream_id then
+        raise exception 'thread does not belong to stream';
+    end if;
+
+    if v_closure_type is not null then
+        raise exception 'thread is already closed';
+    end if;
 
     perform 1 from api_stream where stream_id = v_stream_id for update;
 
@@ -244,6 +298,7 @@ declare
     v_participant_id bigint;
     v_thread_stream_id bigint;
     v_thread_object_id bigint;
+    v_thread_closure_type text;
     v_source_object_id bigint;
     v_target_object_id bigint;
     v_next_seq bigint;
@@ -265,8 +320,8 @@ begin
         raise exception 'unknown participant';
     end if;
 
-    select stream_id, object_id
-    into v_thread_stream_id, v_thread_object_id
+    select stream_id, object_id, closure_type
+    into v_thread_stream_id, v_thread_object_id, v_thread_closure_type
     from api_thread
     where thread_id = p_thread_id
     for update;
@@ -277,6 +332,10 @@ begin
 
     if v_thread_stream_id <> v_stream_id then
         raise exception 'thread does not belong to stream';
+    end if;
+
+    if v_thread_closure_type is not null then
+        raise exception 'thread is not open';
     end if;
 
     select object_id into v_source_object_id
@@ -351,6 +410,145 @@ begin
     )
     returning api_relation.relation_id
     into relation_id;
+
+    return next;
+end;
+$$;
+
+------------------------------------------------------------------------------
+-- record_attribute
+------------------------------------------------------------------------------
+
+create or replace function record_attribute(
+    p_stream_code text,
+    p_participant_code text,
+    p_thread_id bigint,
+    p_object_kind text,
+    p_object_key text,
+    p_attr_name text,
+    p_attr_value text default null,
+    p_value_type text default null
+)
+returns table (
+    object_attr_id bigint,
+    created_by_act_id bigint,
+    act_seq bigint
+)
+language plpgsql
+as $$
+declare
+    v_stream_id bigint;
+    v_participant_id bigint;
+    v_thread_stream_id bigint;
+    v_thread_object_id bigint;
+    v_thread_closure_type text;
+    v_object_id bigint;
+    v_next_seq bigint;
+begin
+
+    select stream_id into v_stream_id
+    from api_stream
+    where stream_code = upper(p_stream_code);
+
+    if v_stream_id is null then
+        raise exception 'unknown stream';
+    end if;
+
+    select participant_id into v_participant_id
+    from api_participant
+    where participant_code = upper(p_participant_code);
+
+    if v_participant_id is null then
+        raise exception 'unknown participant';
+    end if;
+
+    select stream_id, object_id, closure_type
+    into v_thread_stream_id, v_thread_object_id, v_thread_closure_type
+    from api_thread
+    where thread_id = p_thread_id
+    for update;
+
+    if v_thread_object_id is null then
+        raise exception 'unknown thread';
+    end if;
+
+    if v_thread_stream_id <> v_stream_id then
+        raise exception 'thread does not belong to stream';
+    end if;
+
+    if v_thread_closure_type is not null then
+        raise exception 'thread is not open';
+    end if;
+
+    select object_id into v_object_id
+    from api_object
+    where stream_id = v_stream_id
+      and object_kind = upper(p_object_kind)
+      and object_key = upper(p_object_key);
+
+    if v_object_id is null then
+        raise exception 'unknown object';
+    end if;
+
+    if v_thread_object_id <> v_object_id then
+        raise exception 'thread does not govern object';
+    end if;
+
+    if p_attr_name is null or btrim(p_attr_name) = '' then
+        raise exception 'attribute name is required';
+    end if;
+
+    perform 1 from api_stream where stream_id = v_stream_id for update;
+
+    select coalesce(max(a.act_seq),0)+1
+    into v_next_seq
+    from api_act a
+    where a.stream_id = v_stream_id;
+
+    insert into api_act(
+        stream_id, participant_id, object_id,
+        act_seq, act_type, thread_id, payload_json
+    )
+    values(
+        v_stream_id,
+        v_participant_id,
+        v_object_id,
+        v_next_seq,
+        'ATTRIBUTE',
+        p_thread_id,
+        jsonb_build_object(
+            'attr_name', upper(p_attr_name),
+            'attr_value', p_attr_value,
+            'value_type', case
+                when p_value_type is null or btrim(p_value_type) = '' then null
+                else upper(p_value_type)
+            end
+        )
+    )
+    returning api_act.act_id, api_act.act_seq
+    into created_by_act_id, act_seq;
+
+    insert into api_object_attr(
+        object_id,
+        attr_name,
+        attr_value,
+        value_type,
+        thread_id,
+        created_by_act_id
+    )
+    values(
+        v_object_id,
+        upper(p_attr_name),
+        p_attr_value,
+        case
+            when p_value_type is null or btrim(p_value_type) = '' then null
+            else upper(p_value_type)
+        end,
+        p_thread_id,
+        created_by_act_id
+    )
+    returning api_object_attr.object_attr_id
+    into object_attr_id;
 
     return next;
 end;
