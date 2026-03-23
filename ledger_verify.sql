@@ -48,7 +48,7 @@ begin
     perform assert_zero(
     $query$
     select *
-    from v_ambiguous_object
+    from api_ledger.v_ambiguous_object
     $query$,
     'no object may have multiple governing threads'
     );
@@ -58,10 +58,10 @@ begin
     select a.stream_id, a.object_id
     from (
         select stream_id, object_id
-        from v_accepted_thread
+        from api_ledger.v_accepted_thread
         group by stream_id, object_id
     ) a
-    left join v_governing_thread g
+    left join api_ledger.v_governing_thread g
       on g.stream_id = a.stream_id
      and g.object_id = a.object_id
     where g.thread_id is null
@@ -72,8 +72,8 @@ begin
     perform assert_zero(
     $query$
     select open_t.stream_id, open_t.object_id, open_t.thread_id
-    from v_thread_status open_t
-    join v_governing_thread g
+    from api_ledger.v_thread_status open_t
+    join api_ledger.v_governing_thread g
       on g.stream_id = open_t.stream_id
      and g.object_id = open_t.object_id
     where open_t.thread_status = 'OPEN'
@@ -84,8 +84,8 @@ begin
     perform assert_zero(
     $query$
     select r.relation_id
-    from v_registry_relation r
-    left join v_governing_thread g
+    from api_ledger.v_registry_relation r
+    left join api_ledger.v_governing_thread g
       on g.thread_id = r.thread_id
     where g.thread_id is null
     $query$,
@@ -95,8 +95,8 @@ begin
     perform assert_zero(
     $query$
     select r.relation_id
-    from api_relation r
-    join v_thread_status ts
+    from api_ledger.api_relation r
+    join api_ledger.v_thread_status ts
       on ts.thread_id = r.thread_id
     where ts.thread_status = 'RESTARTED'
     $query$,
@@ -105,13 +105,20 @@ begin
 
     perform assert_zero(
     $query$
-    select oa.object_attr_id
-    from api_object_attr oa
-    left join v_governing_thread g
-      on g.thread_id = oa.thread_id
-    where g.thread_id is null
+    select object_attr_id
+    from api_ledger.v_attribute_status
+    where attribute_semantics in ('UNRESOLVED', 'UNKNOWN')
     $query$,
-    'no attribute may remain on a non-governing thread'
+    'attributes must resolve to draft, void, historical, or authoritative semantics'
+    );
+
+    perform assert_zero(
+    $query$
+    select object_attr_id
+    from api_ledger.v_registry_attribute
+    where attribute_semantics <> 'AUTHORITATIVE'
+    $query$,
+    'authoritative attribute registry may only contain authoritative attributes'
     );
 
     perform assert_zero(
@@ -121,7 +128,7 @@ begin
             stream_id,
             act_seq,
             row_number() over (partition by stream_id order by act_seq) as expected_seq
-        from api_act
+        from api_ledger.api_act
     )
     select *
     from seqs

@@ -118,6 +118,52 @@ join v_governing_thread gt
   on gt.thread_id = r.thread_id;
 
 ------------------------------------------------------------------------------
+-- ATTRIBUTE SEMANTICS
+------------------------------------------------------------------------------
+
+create or replace view v_attribute_status as
+select
+    oa.object_attr_id,
+    o.stream_id,
+    oa.object_id,
+    o.object_kind,
+    o.object_key,
+    oa.attr_name,
+    oa.attr_value,
+    oa.value_type,
+    oa.thread_id,
+    oa.created_by_act_id,
+    oa.created_ts,
+    ts.thread_status,
+    case
+        when ts.thread_status = 'OPEN' then 'DRAFT'
+        when ts.thread_status = 'RESTARTED' then 'VOID'
+        when gt.thread_id is not null then 'AUTHORITATIVE'
+        when st.thread_id is not null then 'HISTORICAL'
+        when ts.thread_status = 'ACCEPTED' then 'UNRESOLVED'
+        else 'UNKNOWN'
+    end as attribute_semantics
+from api_object_attr oa
+join api_object o
+  on o.object_id = oa.object_id
+join v_thread_status ts
+  on ts.thread_id = oa.thread_id
+left join v_governing_thread gt
+  on gt.thread_id = oa.thread_id
+left join v_superseded_thread st
+  on st.thread_id = oa.thread_id
+ and st.stream_id = ts.stream_id;
+
+------------------------------------------------------------------------------
+-- AUTHORITATIVE ATTRIBUTE REGISTRY
+------------------------------------------------------------------------------
+
+create or replace view v_registry_attribute as
+select *
+from v_attribute_status
+where attribute_semantics = 'AUTHORITATIVE';
+
+------------------------------------------------------------------------------
 -- GOVERNANCE AMBIGUITY
 ------------------------------------------------------------------------------
 
