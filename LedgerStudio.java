@@ -33,11 +33,35 @@ import java.util.Scanner;
 public final class LedgerStudio {
 
     private static final String DEFAULT_SCHEMA = "api_ledger";
-    private static final String DEFAULT_DATABASE = System.getProperty("user.name", "postgres");
-    private static final String DEFAULT_JDBC_URL = "jdbc:postgresql://localhost:5432/" + DEFAULT_DATABASE;
-    private static final String DEFAULT_DB_USER = System.getProperty("user.name", "postgres");
+    private static final String ENV_DB_DATABASE = "LEDGER_DB_DATABASE";
+    private static final String ENV_DB_URL = "LEDGER_DB_URL";
+    private static final String ENV_DB_USER = "LEDGER_DB_USER";
+    private static final String ENV_DB_PASSWORD = "LEDGER_DB_PASSWORD";
+    private static final String DEFAULT_DATABASE = firstNonBlank(
+            System.getenv(ENV_DB_DATABASE),
+            firstNonBlank(System.getenv("PGDATABASE"), System.getProperty("user.name", "postgres"))
+    );
+    private static final String DEFAULT_JDBC_URL = firstNonBlank(
+            System.getenv(ENV_DB_URL),
+            "jdbc:postgresql://localhost:5432/" + DEFAULT_DATABASE
+    );
+    private static final String DEFAULT_DB_USER = firstNonBlank(
+            System.getenv(ENV_DB_USER),
+            firstNonBlank(System.getenv("PGUSER"), System.getProperty("user.name", "postgres"))
+    );
+    private static final String DEFAULT_DB_PASSWORD = firstNonBlank(
+            System.getenv(ENV_DB_PASSWORD),
+            System.getenv("PGPASSWORD")
+    );
 
     private LedgerStudio() {
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) {
+            return preferred;
+        }
+        return fallback;
     }
 
     public static void main(String[] args) {
@@ -65,6 +89,18 @@ public final class LedgerStudio {
                 "from api_ledger.v_registry_object ro " +
                 "join api_ledger.api_stream s on s.stream_id = ro.stream_id " +
                 "order by ro.object_kind, ro.object_key";
+
+        private static final String RESET_SQL =
+                "truncate table " +
+                "api_ledger.api_object_attr, " +
+                "api_ledger.api_relation, " +
+                "api_ledger.api_thread_supersession, " +
+                "api_ledger.api_thread, " +
+                "api_ledger.api_act, " +
+                "api_ledger.api_object, " +
+                "api_ledger.api_participant, " +
+                "api_ledger.api_stream " +
+                "restart identity cascade";
 
         private final Scanner scanner = new Scanner(System.in);
         private Connection connection;
@@ -102,6 +138,10 @@ public final class LedgerStudio {
             }
             if (matches(line, "help")) {
                 printHelp();
+                return true;
+            }
+            if (matches(line, "connect-default")) {
+                handleConnectDefault();
                 return true;
             }
             if (matches(line, "connect")) {
@@ -172,6 +212,16 @@ public final class LedgerStudio {
                 printDiagnostics();
                 return true;
             }
+            if (matches(line, "reset")) {
+                requireConnection();
+                handleReset();
+                return true;
+            }
+            if (matches(line, "demo")) {
+                requireConnection();
+                handleDemo();
+                return true;
+            }
             if (matches(line, "verify")) {
                 requireConnection();
                 handleVerify();
@@ -233,6 +283,7 @@ public final class LedgerStudio {
             System.out.println("--------");
             System.out.println("help");
             System.out.println("connect");
+            System.out.println("connect-default");
             System.out.println("disconnect");
             System.out.println("status");
             System.out.println("streams");
@@ -244,6 +295,8 @@ public final class LedgerStudio {
             System.out.println("snapshot-objects");
             System.out.println("snapshot-relations");
             System.out.println("diagnostics");
+            System.out.println("reset");
+            System.out.println("demo");
             System.out.println("run-scenario <scenario-name>");
             System.out.println("verify");
             System.out.println("run-file <path-to-sql-file>");
@@ -260,25 +313,50 @@ public final class LedgerStudio {
         }
 
         private void handleConnect() throws SQLException {
+            connect(true);
+        }
+
+        private void handleConnectDefault() throws SQLException {
+            connect(false);
+        }
+
+        private void connect(boolean interactive) throws SQLException {
             if (connection != null && !connection.isClosed()) {
                 System.out.println("Already connected.");
                 return;
             }
 
-            System.out.print("JDBC URL [" + DEFAULT_JDBC_URL + "]: ");
-            String url = scanner.nextLine().trim();
-            if (url.isEmpty()) {
-                url = DEFAULT_JDBC_URL;
-            }
+            String url = DEFAULT_JDBC_URL;
+            String user = DEFAULT_DB_USER;
+            String password = DEFAULT_DB_PASSWORD;
 
-            System.out.print("User [" + DEFAULT_DB_USER + "]: ");
-            String user = scanner.nextLine().trim();
-            if (user.isEmpty()) {
-                user = DEFAULT_DB_USER;
-            }
+            if (interactive) {
+                System.out.print("JDBC URL [" + DEFAULT_JDBC_URL + "]: ");
+                String enteredUrl = scanner.nextLine().trim();
+                if (!enteredUrl.isEmpty()) {
+                    url = enteredUrl;
+                }
 
-            System.out.print("Password: ");
-            String password = scanner.nextLine();
+                System.out.print("User [" + DEFAULT_DB_USER + "]: ");
+                String enteredUser = scanner.nextLine().trim();
+                if (!enteredUser.isEmpty()) {
+                    user = enteredUser;
+                }
+
+                if (password == null || password.isBlank()) {
+                    System.out.print("Password: ");
+                    password = scanner.nextLine();
+                } else {
+                    System.out.println("Password [env]: using configured password");
+                }
+            } else {
+                if (password == null || password.isBlank()) {
+                    throw new IllegalStateException(
+                            "No default password configured. Set LEDGER_DB_PASSWORD or PGPASSWORD, or use 'connect'."
+                    );
+                }
+                System.out.println("Connecting with configured defaults.");
+            }
 
             connection = DriverManager.getConnection(url, user, password);
             connection.setAutoCommit(true);
@@ -349,9 +427,20 @@ public final class LedgerStudio {
             );
         }
 
+        private void handleDemo() throws Exception {
+            handleReset();
+            runScenario(resolveScenarioPath("scenario01"), true, false);
+            handleVerify();
+            System.out.println("\nGoverning snapshot:");
+            printQuery(GOVERNING_SNAPSHOT_SQL);
+        }
+
         private void handleRunScenario(String line) throws Exception {
             String[] parts = splitArgs(line, 2);
-            Path scenarioPath = resolveScenarioPath(parts[1]);
+            runScenario(resolveScenarioPath(parts[1]), true, true);
+        }
+
+        private void runScenario(Path scenarioPath, boolean printLifecycleSummary, boolean printGoverningSnapshot) throws Exception {
             String sql = Files.readString(scenarioPath);
             boolean previousAutoCommit = connection.getAutoCommit();
 
@@ -361,10 +450,14 @@ public final class LedgerStudio {
                 executeSqlScript(sql);
 
                 System.out.println("Scenario executed: " + scenarioPath.getFileName());
-                System.out.println("\nLifecycle summary:");
-                printQuery(THREAD_SUMMARY_SQL);
-                System.out.println("\nGoverning snapshot:");
-                printQuery(GOVERNING_SNAPSHOT_SQL);
+                if (printLifecycleSummary) {
+                    System.out.println("\nLifecycle summary:");
+                    printQuery(THREAD_SUMMARY_SQL);
+                }
+                if (printGoverningSnapshot) {
+                    System.out.println("\nGoverning snapshot:");
+                    printQuery(GOVERNING_SNAPSHOT_SQL);
+                }
 
                 connection.commit();
                 System.out.println("\nScenario committed.");
@@ -391,6 +484,24 @@ public final class LedgerStudio {
             } catch (Exception e) {
                 rollbackQuietly();
                 System.out.println("FAIL: " + summarizeThrowable(e));
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+                setSearchPath();
+            }
+        }
+
+        private void handleReset() throws SQLException {
+            boolean previousAutoCommit = connection.getAutoCommit();
+
+            try {
+                connection.setAutoCommit(false);
+                setSearchPath();
+                executeSqlScript(RESET_SQL);
+                connection.commit();
+                System.out.println("ledger reset");
+            } catch (SQLException e) {
+                rollbackQuietly();
+                throw e;
             } finally {
                 connection.setAutoCommit(previousAutoCommit);
                 setSearchPath();
