@@ -282,7 +282,9 @@ public final class LedgerStudio {
                 return true;
             }
             if (line.toLowerCase(Locale.ROOT).startsWith("relate ")) {
-                throw new UnsupportedOperationException("The relate command is not installed in this repo yet.");
+                requireConnection();
+                handleRecordRelate(line);
+                return true;
             }
             if (line.toLowerCase(Locale.ROOT).startsWith("supersede ")) {
                 requireConnection();
@@ -332,6 +334,7 @@ public final class LedgerStudio {
             System.out.println("commit <stream_code> <participant_code> <object_kind> <object_key>");
             System.out.println("fulfill <stream_code> <participant_code> <thread_id>");
             System.out.println("restart <stream_code> <participant_code> <thread_id>");
+            System.out.println("relate <stream_code> <participant_code> <thread_id> <source_kind> <source_key> <relation_type> <target_kind> <target_key> [ordinal_no]");
             System.out.println("supersede <stream_code> <participant_code> <superseding_thread_id> <superseded_thread_id>");
             System.out.println();
             System.out.println("exit");
@@ -697,6 +700,50 @@ public final class LedgerStudio {
                 ps.setString(2, participantCode);
                 ps.setLong(3, supersedingThreadId);
                 ps.setLong(4, supersededThreadId);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    printResultSet(rs);
+                }
+            }
+        }
+
+
+        private void handleRecordRelate(String line) throws SQLException {
+            String[] parts = line.trim().split("\\s+");
+            if (parts.length != 9 && parts.length != 10) {
+                throw new IllegalArgumentException(
+                        "Usage: relate <stream_code> <participant_code> <thread_id> <source_kind> <source_key> <relation_type> <target_kind> <target_key> [ordinal_no]"
+                );
+            }
+
+            String streamCode = parts[1];
+            String participantCode = parts[2];
+            long threadId = parseLong(parts[3], "thread_id");
+            String sourceKind = parts[4];
+            String sourceKey = parts[5];
+            String relationType = parts[6];
+            String targetKind = parts[7];
+            String targetKey = parts[8];
+            Integer ordinalNo = (parts.length == 10) ? Integer.valueOf(parts[9]) : null;
+
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "select relation_id, created_by_act_id, act_seq " +
+                    "from api_ledger.record_relate(?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            )) {
+                ps.setString(1, streamCode);
+                ps.setString(2, participantCode);
+                ps.setLong(3, threadId);
+                ps.setString(4, sourceKind);
+                ps.setString(5, sourceKey);
+                ps.setString(6, relationType);
+                ps.setString(7, targetKind);
+                ps.setString(8, targetKey);
+
+                if (ordinalNo == null) {
+                    ps.setNull(9, java.sql.Types.INTEGER);
+                } else {
+                    ps.setInt(9, ordinalNo);
+                }
 
                 try (ResultSet rs = ps.executeQuery()) {
                     printResultSet(rs);
