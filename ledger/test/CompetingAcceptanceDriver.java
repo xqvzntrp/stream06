@@ -61,6 +61,14 @@ public class CompetingAcceptanceDriver {
         return queryCount("select count(*) from api_ledger.api_thread");
     }
 
+    public long acceptedGoverningThreadCount() throws SQLException {
+        return queryCount("select count(*) from api_ledger.v_governing_thread where thread_status = 'ACCEPTED'");
+    }
+
+    public long restartedGoverningThreadCount() throws SQLException {
+        return queryCount("select count(*) from api_ledger.v_governing_thread where thread_status = 'RESTARTED'");
+    }
+
     protected void seed(Connection cx) throws SQLException {
         try (Statement st = cx.createStatement()) {
             st.execute("insert into api_ledger.api_stream(stream_code, stream_title) values ('API', 'API Stream')");
@@ -90,6 +98,16 @@ public class CompetingAcceptanceDriver {
     protected void recordFulfill(Connection cx, long threadId) throws SQLException {
         try (PreparedStatement ps = cx.prepareStatement(
                 "select act_id, act_seq from api_ledger.record_fulfill(?, ?, ?)")) {
+            ps.setString(1, STREAM_CODE);
+            ps.setString(2, PARTICIPANT_CODE);
+            ps.setLong(3, threadId);
+            ps.executeQuery().close();
+        }
+    }
+
+    protected void recordRestart(Connection cx, long threadId) throws SQLException {
+        try (PreparedStatement ps = cx.prepareStatement(
+                "select act_id, act_seq from api_ledger.record_restart(?, ?, ?)")) {
             ps.setString(1, STREAM_CODE);
             ps.setString(2, PARTICIPANT_CODE);
             ps.setLong(3, threadId);

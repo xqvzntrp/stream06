@@ -48,6 +48,8 @@ public final class LedgerTestRunner {
         runCompetingAcceptanceSuite(lifecycle, scenarioExecutor, verifier, user, password);
         runConcurrentCompetingAcceptanceSuite(lifecycle, scenarioExecutor, verifier, user, password);
         runSupersessionResolutionSuite(lifecycle, scenarioExecutor, verifier, user, password);
+        runRestartVsFulfillSuite(lifecycle, scenarioExecutor, verifier, user, password);
+        runConcurrentRestartVsFulfillSuite(lifecycle, scenarioExecutor, verifier, user, password);
 
         System.out.println();
         System.out.println("ALL SCENARIOS PASSED");
@@ -263,6 +265,92 @@ public final class LedgerTestRunner {
             assertEquals(driver.restartedThreadCount(), 0, "supersession-resolution restarted thread count");
 
             System.out.println("PASS: supersession-resolution");
+        } finally {
+            try {
+                cx.close();
+            } finally {
+                lifecycle.dropDatabase(db.name);
+            }
+        }
+    }
+
+    private static void runRestartVsFulfillSuite(DatabaseLifecycle lifecycle,
+                                                 ScenarioExecutor scenarioExecutor,
+                                                 VerificationExecutor verifier,
+                                                 String user,
+                                                 String password) throws Exception {
+        System.out.println();
+        System.out.println("=== RUNNING COLLISION: restart-vs-fulfill");
+
+        DatabaseLifecycle.TestDatabase db = lifecycle.createFreshDatabase();
+        Connection cx = db.connection;
+
+        try {
+            System.out.println("database: " + db.name);
+            installProtocol(cx, scenarioExecutor);
+
+            RestartVsFulfillDriver driver = new RestartVsFulfillDriver(db.url, user, password);
+            driver.run();
+            verifyOutcome(verifier, cx, SuiteOutcome.EXPECT_PASS);
+
+            assertEquals(driver.ambiguousObjectCount(), 0, "restart-vs-fulfill ambiguous object count");
+            assertEquals(driver.governingThreadCount(), 1, "restart-vs-fulfill governing thread count");
+            assertEquals(driver.acceptedThreadCount(), 1, "restart-vs-fulfill accepted thread count");
+            assertEquals(driver.restartedThreadCount(), 1, "restart-vs-fulfill restarted thread count");
+            assertEquals(driver.openThreadCount(), 0, "restart-vs-fulfill open thread count");
+            assertEquals(driver.totalThreadCount(), 2, "restart-vs-fulfill total thread count");
+            assertEquals(driver.acceptedGoverningThreadCount(), 1,
+                    "restart-vs-fulfill accepted governing thread count");
+            assertEquals(driver.restartedGoverningThreadCount(), 0,
+                    "restart-vs-fulfill restarted governing thread count");
+
+            System.out.println("PASS: restart-vs-fulfill");
+        } finally {
+            try {
+                cx.close();
+            } finally {
+                lifecycle.dropDatabase(db.name);
+            }
+        }
+    }
+
+    private static void runConcurrentRestartVsFulfillSuite(DatabaseLifecycle lifecycle,
+                                                           ScenarioExecutor scenarioExecutor,
+                                                           VerificationExecutor verifier,
+                                                           String user,
+                                                           String password) throws Exception {
+        System.out.println();
+        System.out.println("=== RUNNING COLLISION: concurrent-restart-vs-fulfill");
+
+        DatabaseLifecycle.TestDatabase db = lifecycle.createFreshDatabase();
+        Connection cx = db.connection;
+
+        try {
+            System.out.println("database: " + db.name);
+            installProtocol(cx, scenarioExecutor);
+
+            ConcurrentRestartVsFulfillDriver driver = new ConcurrentRestartVsFulfillDriver(db.url, user, password);
+            driver.run();
+            verifyOutcome(verifier, cx, SuiteOutcome.EXPECT_PASS);
+
+            assertEquals(driver.ambiguousObjectCount(), 0,
+                    "concurrent-restart-vs-fulfill ambiguous object count");
+            assertEquals(driver.governingThreadCount(), 1,
+                    "concurrent-restart-vs-fulfill governing thread count");
+            assertEquals(driver.acceptedThreadCount(), 1,
+                    "concurrent-restart-vs-fulfill accepted thread count");
+            assertEquals(driver.restartedThreadCount(), 1,
+                    "concurrent-restart-vs-fulfill restarted thread count");
+            assertEquals(driver.openThreadCount(), 0,
+                    "concurrent-restart-vs-fulfill open thread count");
+            assertEquals(driver.totalThreadCount(), 2,
+                    "concurrent-restart-vs-fulfill total thread count");
+            assertEquals(driver.acceptedGoverningThreadCount(), 1,
+                    "concurrent-restart-vs-fulfill accepted governing thread count");
+            assertEquals(driver.restartedGoverningThreadCount(), 0,
+                    "concurrent-restart-vs-fulfill restarted governing thread count");
+
+            System.out.println("PASS: concurrent-restart-vs-fulfill");
         } finally {
             try {
                 cx.close();
