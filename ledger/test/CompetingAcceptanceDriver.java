@@ -9,7 +9,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class CompetingAcceptanceDriver {
+public class CompetingAcceptanceDriver {
 
     private static final String STREAM_CODE = "API";
     private static final String PARTICIPANT_CODE = "ALICE";
@@ -45,7 +45,23 @@ public final class CompetingAcceptanceDriver {
         }
     }
 
-    private void seed(Connection cx) throws SQLException {
+    public long acceptedThreadCount() throws SQLException {
+        return queryCount("select count(*) from api_ledger.v_thread_status where thread_status = 'ACCEPTED'");
+    }
+
+    public long openThreadCount() throws SQLException {
+        return queryCount("select count(*) from api_ledger.v_thread_status where thread_status = 'OPEN'");
+    }
+
+    public long restartedThreadCount() throws SQLException {
+        return queryCount("select count(*) from api_ledger.v_thread_status where thread_status = 'RESTARTED'");
+    }
+
+    public long totalThreadCount() throws SQLException {
+        return queryCount("select count(*) from api_ledger.api_thread");
+    }
+
+    protected void seed(Connection cx) throws SQLException {
         try (Statement st = cx.createStatement()) {
             st.execute("insert into api_ledger.api_stream(stream_code, stream_title) values ('API', 'API Stream')");
             st.execute("insert into api_ledger.api_participant(participant_code, display_name) values ('ALICE', 'Alice')");
@@ -57,7 +73,7 @@ public final class CompetingAcceptanceDriver {
         }
     }
 
-    private long recordCommit(Connection cx) throws SQLException {
+    protected long recordCommit(Connection cx) throws SQLException {
         try (PreparedStatement ps = cx.prepareStatement(
                 "select act_id, act_seq, thread_id from api_ledger.record_commit(?, ?, ?, ?, null)")) {
             ps.setString(1, STREAM_CODE);
@@ -71,12 +87,23 @@ public final class CompetingAcceptanceDriver {
         }
     }
 
-    private void recordFulfill(Connection cx, long threadId) throws SQLException {
+    protected void recordFulfill(Connection cx, long threadId) throws SQLException {
         try (PreparedStatement ps = cx.prepareStatement(
                 "select act_id, act_seq from api_ledger.record_fulfill(?, ?, ?)")) {
             ps.setString(1, STREAM_CODE);
             ps.setString(2, PARTICIPANT_CODE);
             ps.setLong(3, threadId);
+            ps.executeQuery().close();
+        }
+    }
+
+    protected void recordSupersede(Connection cx, long supersedingThreadId, long supersededThreadId) throws SQLException {
+        try (PreparedStatement ps = cx.prepareStatement(
+                "select act_id, act_seq, thread_supersession_id from api_ledger.record_supersede(?, ?, ?, ?)")) {
+            ps.setString(1, STREAM_CODE);
+            ps.setString(2, PARTICIPANT_CODE);
+            ps.setLong(3, supersedingThreadId);
+            ps.setLong(4, supersededThreadId);
             ps.executeQuery().close();
         }
     }
@@ -97,7 +124,18 @@ public final class CompetingAcceptanceDriver {
         }
     }
 
-    private void initializeConnection(Connection cx) throws SQLException {
+    protected long queryCount(String sql) throws SQLException {
+        try (Connection cx = DriverManager.getConnection(jdbcUrl, user, password)) {
+            initializeConnection(cx);
+            try (PreparedStatement ps = cx.prepareStatement(sql);
+                 ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        }
+    }
+
+    protected void initializeConnection(Connection cx) throws SQLException {
         cx.setAutoCommit(true);
         try (Statement st = cx.createStatement()) {
             st.execute("set search_path = api_ledger");

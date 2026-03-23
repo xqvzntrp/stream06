@@ -46,6 +46,8 @@ public final class LedgerTestRunner {
         runCommitStressSuite(lifecycle, scenarioExecutor, verifier, user, password);
         runMixedLifecycleSuite(lifecycle, scenarioExecutor, verifier, user, password);
         runCompetingAcceptanceSuite(lifecycle, scenarioExecutor, verifier, user, password);
+        runConcurrentCompetingAcceptanceSuite(lifecycle, scenarioExecutor, verifier, user, password);
+        runSupersessionResolutionSuite(lifecycle, scenarioExecutor, verifier, user, password);
 
         System.out.println();
         System.out.println("ALL SCENARIOS PASSED");
@@ -164,15 +166,103 @@ public final class LedgerTestRunner {
             verifyOutcome(verifier, cx, SuiteOutcome.EXPECT_FAIL);
 
             List<String> ambiguousRows = driver.ambiguousObjects();
-            if (ambiguousRows.isEmpty()) {
-                throw new IllegalStateException("expected ambiguity rows but found none");
+            if (ambiguousRows.size() != 1) {
+                throw new IllegalStateException("expected exactly one ambiguous object, got " + ambiguousRows.size());
             }
+            assertEquals(driver.acceptedThreadCount(), 2, "competing-acceptance accepted thread count");
+            assertEquals(driver.openThreadCount(), 0, "competing-acceptance open thread count");
+            assertEquals(driver.restartedThreadCount(), 0, "competing-acceptance restarted thread count");
+            assertEquals(driver.totalThreadCount(), 2, "competing-acceptance total thread count");
+
             System.out.println("ambiguous objects:");
             for (String row : ambiguousRows) {
                 System.out.println("  " + row);
             }
 
             System.out.println("PASS: competing-acceptance (expected verification failure)");
+        } finally {
+            try {
+                cx.close();
+            } finally {
+                lifecycle.dropDatabase(db.name);
+            }
+        }
+    }
+
+    private static void runConcurrentCompetingAcceptanceSuite(DatabaseLifecycle lifecycle,
+                                                              ScenarioExecutor scenarioExecutor,
+                                                              VerificationExecutor verifier,
+                                                              String user,
+                                                              String password) throws Exception {
+        System.out.println();
+        System.out.println("=== RUNNING COLLISION: concurrent-competing-acceptance");
+
+        DatabaseLifecycle.TestDatabase db = lifecycle.createFreshDatabase();
+        Connection cx = db.connection;
+
+        try {
+            System.out.println("database: " + db.name);
+            installProtocol(cx, scenarioExecutor);
+
+            ConcurrentCompetingAcceptanceDriver driver =
+                    new ConcurrentCompetingAcceptanceDriver(db.url, user, password, CONCURRENCY_WORKERS);
+            driver.run();
+            verifyOutcome(verifier, cx, SuiteOutcome.EXPECT_FAIL);
+
+            List<String> ambiguousRows = driver.ambiguousObjects();
+            if (ambiguousRows.size() != 1) {
+                throw new IllegalStateException("expected exactly one ambiguous object, got " + ambiguousRows.size());
+            }
+            assertEquals(driver.acceptedThreadCount(), CONCURRENCY_WORKERS,
+                    "concurrent-competing-acceptance accepted thread count");
+            assertEquals(driver.openThreadCount(), 0,
+                    "concurrent-competing-acceptance open thread count");
+            assertEquals(driver.restartedThreadCount(), 0,
+                    "concurrent-competing-acceptance restarted thread count");
+            assertEquals(driver.totalThreadCount(), CONCURRENCY_WORKERS,
+                    "concurrent-competing-acceptance total thread count");
+
+            System.out.println("ambiguous objects:");
+            for (String row : ambiguousRows) {
+                System.out.println("  " + row);
+            }
+
+            System.out.println("PASS: concurrent-competing-acceptance (expected verification failure)");
+        } finally {
+            try {
+                cx.close();
+            } finally {
+                lifecycle.dropDatabase(db.name);
+            }
+        }
+    }
+
+    private static void runSupersessionResolutionSuite(DatabaseLifecycle lifecycle,
+                                                       ScenarioExecutor scenarioExecutor,
+                                                       VerificationExecutor verifier,
+                                                       String user,
+                                                       String password) throws Exception {
+        System.out.println();
+        System.out.println("=== RUNNING COLLISION: supersession-resolution");
+
+        DatabaseLifecycle.TestDatabase db = lifecycle.createFreshDatabase();
+        Connection cx = db.connection;
+
+        try {
+            System.out.println("database: " + db.name);
+            installProtocol(cx, scenarioExecutor);
+
+            SupersessionResolutionDriver driver = new SupersessionResolutionDriver(db.url, user, password);
+            driver.run();
+            verifyOutcome(verifier, cx, SuiteOutcome.EXPECT_PASS);
+
+            assertEquals(driver.ambiguousObjectCount(), 0, "supersession-resolution ambiguous object count");
+            assertEquals(driver.governingThreadCount(), 1, "supersession-resolution governing thread count");
+            assertEquals(driver.acceptedThreadCount(), 2, "supersession-resolution accepted thread count");
+            assertEquals(driver.openThreadCount(), 0, "supersession-resolution open thread count");
+            assertEquals(driver.restartedThreadCount(), 0, "supersession-resolution restarted thread count");
+
+            System.out.println("PASS: supersession-resolution");
         } finally {
             try {
                 cx.close();
@@ -202,6 +292,12 @@ public final class LedgerTestRunner {
                 return;
             }
             throw e;
+        }
+    }
+
+    private static void assertEquals(long actual, long expected, String label) {
+        if (actual != expected) {
+            throw new IllegalStateException(label + " expected=" + expected + " actual=" + actual);
         }
     }
 
