@@ -58,12 +58,10 @@ begin
         raise exception 'unknown object';
     end if;
 
-    perform 1 from api_stream where stream_id = v_stream_id for update;
-
-    select coalesce(max(a.act_seq),0)+1
-    into v_next_seq
-    from api_act a
-    where a.stream_id = v_stream_id;
+    update api_stream_head
+    set next_act_seq = next_act_seq + 1
+    where stream_id = v_stream_id
+    returning next_act_seq - 1 into v_next_seq;
 
     insert into api_act(
         stream_id, participant_id, object_id,
@@ -157,12 +155,10 @@ begin
         raise exception 'thread is already closed';
     end if;
 
-    perform 1 from api_stream where stream_id = v_stream_id for update;
-
-    select coalesce(max(a.act_seq),0)+1
-    into v_next_seq
-    from api_act a
-    where a.stream_id = v_stream_id;
+    update api_stream_head
+    set next_act_seq = next_act_seq + 1
+    where stream_id = v_stream_id
+    returning next_act_seq - 1 into v_next_seq;
 
     insert into api_act(
         stream_id, participant_id, object_id,
@@ -243,12 +239,10 @@ begin
         raise exception 'thread is already closed';
     end if;
 
-    perform 1 from api_stream where stream_id = v_stream_id for update;
-
-    select coalesce(max(a.act_seq),0)+1
-    into v_next_seq
-    from api_act a
-    where a.stream_id = v_stream_id;
+    update api_stream_head
+    set next_act_seq = next_act_seq + 1
+    where stream_id = v_stream_id
+    returning next_act_seq - 1 into v_next_seq;
 
     insert into api_act(
         stream_id, participant_id, object_id,
@@ -362,12 +356,10 @@ begin
         raise exception 'thread does not govern source object';
     end if;
 
-    perform 1 from api_stream where stream_id = v_stream_id for update;
-
-    select coalesce(max(a.act_seq),0)+1
-    into v_next_seq
-    from api_act a
-    where a.stream_id = v_stream_id;
+    update api_stream_head
+    set next_act_seq = next_act_seq + 1
+    where stream_id = v_stream_id
+    returning next_act_seq - 1 into v_next_seq;
 
     insert into api_act(
         stream_id, participant_id, object_id,
@@ -498,12 +490,10 @@ begin
         raise exception 'attribute name is required';
     end if;
 
-    perform 1 from api_stream where stream_id = v_stream_id for update;
-
-    select coalesce(max(a.act_seq),0)+1
-    into v_next_seq
-    from api_act a
-    where a.stream_id = v_stream_id;
+    update api_stream_head
+    set next_act_seq = next_act_seq + 1
+    where stream_id = v_stream_id
+    returning next_act_seq - 1 into v_next_seq;
 
     insert into api_act(
         stream_id, participant_id, object_id,
@@ -633,12 +623,10 @@ begin
         raise exception 'supersession requires accepted threads';
     end if;
 
-    perform 1 from api_stream where stream_id = v_stream_id for update;
-
-    select coalesce(max(a.act_seq),0)+1
-    into v_next_seq
-    from api_act a
-    where a.stream_id = v_stream_id;
+    update api_stream_head
+    set next_act_seq = next_act_seq + 1
+    where stream_id = v_stream_id
+    returning next_act_seq - 1 into v_next_seq;
 
     insert into api_act(
         stream_id, participant_id, object_id,

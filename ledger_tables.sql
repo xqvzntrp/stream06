@@ -30,6 +30,29 @@ create table api_stream (
         check (stream_code = upper(stream_code))
 );
 
+create table api_stream_head (
+    stream_id     bigint primary key references api_stream(stream_id) on delete cascade,
+    next_act_seq  bigint not null
+        check (next_act_seq >= 1)
+);
+
+create or replace function api_stream_insert_head()
+returns trigger
+language plpgsql
+as $$
+begin
+    insert into api_stream_head(stream_id, next_act_seq)
+    values (new.stream_id, 1);
+
+    return new;
+end;
+$$;
+
+create trigger api_stream_insert_head_trg
+after insert on api_stream
+for each row
+execute function api_stream_insert_head();
+
 ------------------------------------------------------------------------------
 -- PARTICIPANT
 ------------------------------------------------------------------------------
