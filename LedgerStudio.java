@@ -1,3 +1,5 @@
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -31,6 +33,9 @@ import java.util.Scanner;
 public final class LedgerStudio {
 
     private static final String DEFAULT_SCHEMA = "api_ledger";
+    private static final String DEFAULT_DATABASE = System.getProperty("user.name", "postgres");
+    private static final String DEFAULT_JDBC_URL = "jdbc:postgresql://localhost:5432/" + DEFAULT_DATABASE;
+    private static final String DEFAULT_DB_USER = System.getProperty("user.name", "postgres");
 
     private LedgerStudio() {
     }
@@ -40,6 +45,27 @@ public final class LedgerStudio {
     }
 
     private static final class StudioApp {
+        private static final String THREAD_SUMMARY_SQL =
+                "select s.stream_code, o.object_kind, o.object_key, ts.thread_id, ts.thread_status, ts.opened_ts, ts.closed_ts " +
+                "from api_ledger.v_thread_status ts " +
+                "join api_ledger.api_stream s on s.stream_id = ts.stream_id " +
+                "join api_ledger.api_object o on o.object_id = ts.object_id " +
+                "order by ts.thread_id";
+
+        private static final String OPEN_THREAD_SUMMARY_SQL =
+                "select s.stream_code, o.object_kind, o.object_key, ts.thread_id, ts.thread_status, ts.opened_ts, ts.closed_ts " +
+                "from api_ledger.v_thread_status ts " +
+                "join api_ledger.api_stream s on s.stream_id = ts.stream_id " +
+                "join api_ledger.api_object o on o.object_id = ts.object_id " +
+                "where ts.thread_status = 'OPEN' " +
+                "order by ts.thread_id";
+
+        private static final String GOVERNING_SNAPSHOT_SQL =
+                "select s.stream_code, ro.object_kind, ro.object_key, ro.object_name, ro.governing_thread_id " +
+                "from api_ledger.v_registry_object ro " +
+                "join api_ledger.api_stream s on s.stream_id = ro.stream_id " +
+                "order by ro.object_kind, ro.object_key";
+
         private final Scanner scanner = new Scanner(System.in);
         private Connection connection;
 
@@ -60,107 +86,138 @@ public final class LedgerStudio {
                 }
 
                 try {
-                    if (matches(line, "quit") || matches(line, "exit")) {
-                        shutdown();
+                    if (!handleCommand(line)) {
                         return;
-                    } else if (matches(line, "help")) {
-                        printHelp();
-                    } else if (matches(line, "connect")) {
-                        handleConnect();
-                    } else if (matches(line, "disconnect")) {
-                        handleDisconnect();
-                    } else if (matches(line, "status")) {
-                        handleStatus();
-                    } else if (matches(line, "streams")) {
-                        requireConnection();
-                        printQuery(
-                                "select stream_id, stream_code, stream_title, created_ts " +
-                                "from api_ledger.api_stream " +
-                                "order by stream_code"
-                        );
-                    } else if (matches(line, "participants")) {
-                        requireConnection();
-                        printQuery(
-                                "select participant_id, participant_code, display_name, created_ts " +
-                                "from api_ledger.api_participant " +
-                                "order by participant_code"
-                        );
-                    } else if (matches(line, "objects")) {
-                        requireConnection();
-                        printQuery(
-                                "select object_id, stream_id, object_kind, object_key, object_name, created_ts " +
-                                "from api_ledger.api_object " +
-                                "order by object_kind, object_key"
-                        );
-                    } else if (matches(line, "threads")) {
-                        requireConnection();
-                        printQuery(
-                                "select stream_code, object_kind, object_key, thread_id, derived_thread_status, opened_ts, closed_ts " +
-                                "from api_ledger.v_api_thread_inspect " +
-                                "order by thread_id"
-                        );
-                    } else if (matches(line, "open-threads")) {
-                        requireConnection();
-                        printQuery(
-                                "select stream_code, object_kind, object_key, thread_id, derived_thread_status, opened_ts, closed_ts " +
-                                "from api_ledger.v_api_thread_inspect " +
-                                "where derived_thread_status = 'OPEN' " +
-                                "order by thread_id"
-                        );
-                    } else if (matches(line, "governance")) {
-                        requireConnection();
-                        printQuery(
-                                "select stream_code, object_kind, object_key, governing_thread_id " +
-                                "from api_ledger.v_api_governance_inspect " +
-                                "order by object_kind, object_key"
-                        );
-                    } else if (matches(line, "snapshot-objects")) {
-                        requireConnection();
-                        printQuery(
-                                "select stream_id, object_id, object_kind, object_key, object_name, governing_thread_id " +
-                                "from api_ledger.v_snapshot_object " +
-                                "order by object_kind, object_key"
-                        );
-                    } else if (matches(line, "snapshot-relations")) {
-                        requireConnection();
-                        printQuery(
-                                "select stream_id, relation_id, source_object_id, relation_type, target_object_id, ordinal_no, governing_thread_id " +
-                                "from api_ledger.v_snapshot_relation " +
-                                "order by relation_id"
-                        );
-                    } else if (matches(line, "diagnostics")) {
-                        requireConnection();
-                        printDiagnostics();
-                    } else if (line.toLowerCase(Locale.ROOT).startsWith("run-file ")) {
-                        requireConnection();
-                        String filePath = line.substring("run-file ".length()).trim();
-                        runSqlFile(filePath);
-                    } else if (line.toLowerCase(Locale.ROOT).startsWith("sql ")) {
-                        requireConnection();
-                        String sql = line.substring(4).trim();
-                        runAdHocSql(sql);
-                    } else if (line.toLowerCase(Locale.ROOT).startsWith("commit ")) {
-                        requireConnection();
-                        handleRecordCommit(line);
-                    } else if (line.toLowerCase(Locale.ROOT).startsWith("fulfill ")) {
-                        requireConnection();
-                        handleRecordFulfill(line);
-                    } else if (line.toLowerCase(Locale.ROOT).startsWith("restart ")) {
-                        requireConnection();
-                        handleRecordRestart(line);
-                    } else if (line.toLowerCase(Locale.ROOT).startsWith("relate ")) {
-                        requireConnection();
-                        handleRecordRelation(line);
-                    } else if (line.toLowerCase(Locale.ROOT).startsWith("supersede ")) {
-                        requireConnection();
-                        handleRecordSupersede(line);
-                    } else {
-                        System.out.println("Unknown command. Type 'help'.");
                     }
                 } catch (Exception e) {
-                    System.out.println("ERROR: " + e.getMessage());
+                    System.out.println("ERROR: " + summarizeThrowable(e));
                 }
             }
+        }
+
+        private boolean handleCommand(String line) throws Exception {
+            if (matches(line, "quit") || matches(line, "exit")) {
+                shutdown();
+                return false;
+            }
+            if (matches(line, "help")) {
+                printHelp();
+                return true;
+            }
+            if (matches(line, "connect")) {
+                handleConnect();
+                return true;
+            }
+            if (matches(line, "disconnect")) {
+                handleDisconnect();
+                return true;
+            }
+            if (matches(line, "status")) {
+                handleStatus();
+                return true;
+            }
+            if (matches(line, "streams")) {
+                requireConnection();
+                printQuery(
+                        "select stream_id, stream_code, stream_title, created_ts " +
+                        "from api_ledger.api_stream " +
+                        "order by stream_code"
+                );
+                return true;
+            }
+            if (matches(line, "participants")) {
+                requireConnection();
+                printQuery(
+                        "select participant_id, participant_code, display_name, created_ts " +
+                        "from api_ledger.api_participant " +
+                        "order by participant_code"
+                );
+                return true;
+            }
+            if (matches(line, "objects")) {
+                requireConnection();
+                printQuery(
+                        "select object_id, stream_id, object_kind, object_key, object_name, created_ts " +
+                        "from api_ledger.api_object " +
+                        "order by object_kind, object_key"
+                );
+                return true;
+            }
+            if (matches(line, "threads")) {
+                requireConnection();
+                printQuery(THREAD_SUMMARY_SQL);
+                return true;
+            }
+            if (matches(line, "open-threads")) {
+                requireConnection();
+                printQuery(OPEN_THREAD_SUMMARY_SQL);
+                return true;
+            }
+            if (matches(line, "governance") || matches(line, "snapshot-objects")) {
+                requireConnection();
+                printQuery(GOVERNING_SNAPSHOT_SQL);
+                return true;
+            }
+            if (matches(line, "snapshot-relations")) {
+                requireConnection();
+                printQuery(
+                        "select stream_id, relation_id, source_object_id, relation_type, target_object_id, ordinal_no, thread_id " +
+                        "from api_ledger.v_registry_relation " +
+                        "order by relation_id"
+                );
+                return true;
+            }
+            if (matches(line, "diagnostics")) {
+                requireConnection();
+                printDiagnostics();
+                return true;
+            }
+            if (matches(line, "verify")) {
+                requireConnection();
+                handleVerify();
+                return true;
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("run-scenario ")) {
+                requireConnection();
+                handleRunScenario(line);
+                return true;
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("run-file ")) {
+                requireConnection();
+                String filePath = line.substring("run-file ".length()).trim();
+                runSqlFile(filePath);
+                return true;
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("sql ")) {
+                requireConnection();
+                String sql = line.substring(4).trim();
+                runAdHocSql(sql);
+                return true;
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("commit ")) {
+                requireConnection();
+                handleRecordCommit(line);
+                return true;
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("fulfill ")) {
+                requireConnection();
+                handleRecordFulfill(line);
+                return true;
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("restart ")) {
+                requireConnection();
+                handleRecordRestart(line);
+                return true;
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("relate ")) {
+                throw new UnsupportedOperationException("The relate command is not installed in this repo yet.");
+            }
+            if (line.toLowerCase(Locale.ROOT).startsWith("supersede ")) {
+                throw new UnsupportedOperationException("The supersede command is not installed in this repo yet.");
+            }
+
+            System.out.println("Unknown command. Type 'help'.");
+            return true;
         }
 
         private void printBanner() {
@@ -187,6 +244,8 @@ public final class LedgerStudio {
             System.out.println("snapshot-objects");
             System.out.println("snapshot-relations");
             System.out.println("diagnostics");
+            System.out.println("run-scenario <scenario-name>");
+            System.out.println("verify");
             System.out.println("run-file <path-to-sql-file>");
             System.out.println("sql <select-or-other-sql>");
             System.out.println();
@@ -195,8 +254,6 @@ public final class LedgerStudio {
             System.out.println("commit <stream_code> <participant_code> <object_kind> <object_key>");
             System.out.println("fulfill <stream_code> <participant_code> <thread_id>");
             System.out.println("restart <stream_code> <participant_code> <thread_id>");
-            System.out.println("relate <stream_code> <participant_code> <thread_id> <source_kind> <source_key> <relation_type> <target_kind> <target_key> [ordinal_no]");
-            System.out.println("supersede <stream_code> <participant_code> <superseding_thread_id> <superseded_thread_id>");
             System.out.println();
             System.out.println("exit");
             System.out.println("quit");
@@ -208,16 +265,16 @@ public final class LedgerStudio {
                 return;
             }
 
-            System.out.print("JDBC URL [jdbc:postgresql://localhost:5432/postgres]: ");
+            System.out.print("JDBC URL [" + DEFAULT_JDBC_URL + "]: ");
             String url = scanner.nextLine().trim();
             if (url.isEmpty()) {
-                url = "jdbc:postgresql://localhost:5432/postgres";
+                url = DEFAULT_JDBC_URL;
             }
 
-            System.out.print("User [postgres]: ");
+            System.out.print("User [" + DEFAULT_DB_USER + "]: ");
             String user = scanner.nextLine().trim();
             if (user.isEmpty()) {
-                user = "postgres";
+                user = DEFAULT_DB_USER;
             }
 
             System.out.print("Password: ");
@@ -225,10 +282,7 @@ public final class LedgerStudio {
 
             connection = DriverManager.getConnection(url, user, password);
             connection.setAutoCommit(true);
-
-            try (Statement st = connection.createStatement()) {
-                st.execute("set search_path = " + DEFAULT_SCHEMA);
-            }
+            setSearchPath();
 
             System.out.println("Connected.");
         }
@@ -272,23 +326,97 @@ public final class LedgerStudio {
             System.out.println("\nAmbiguous governing objects:");
             printQuery(
                     "select stream_id, object_id, governing_thread_count " +
-                    "from api_ledger.v_snapshot_ambiguous_object " +
+                    "from api_ledger.v_ambiguous_object " +
                     "order by object_id"
             );
 
             System.out.println("\nObjects with open threads:");
             printQuery(
-                    "select stream_id, object_id, open_thread_count " +
-                    "from api_ledger.v_snapshot_open_object " +
+                    "select stream_id, object_id, count(*) as open_thread_count " +
+                    "from api_ledger.v_thread_status " +
+                    "where thread_status = 'OPEN' " +
+                    "group by stream_id, object_id " +
                     "order by object_id"
             );
 
             System.out.println("\nHistorical accepted objects:");
             printQuery(
-                    "select stream_id, object_id, thread_id " +
-                    "from api_ledger.v_snapshot_historical_accepted_object " +
-                    "order by object_id, thread_id"
+                    "select a.stream_id, a.object_id, a.thread_id " +
+                    "from api_ledger.v_accepted_thread a " +
+                    "left join api_ledger.v_governing_thread g on g.thread_id = a.thread_id " +
+                    "where g.thread_id is null " +
+                    "order by a.object_id, a.thread_id"
             );
+        }
+
+        private void handleRunScenario(String line) throws Exception {
+            String[] parts = splitArgs(line, 2);
+            Path scenarioPath = resolveScenarioPath(parts[1]);
+            String sql = Files.readString(scenarioPath);
+            boolean previousAutoCommit = connection.getAutoCommit();
+
+            try {
+                connection.setAutoCommit(false);
+                setSearchPath();
+                executeSqlScript(sql);
+
+                System.out.println("Scenario executed: " + scenarioPath.getFileName());
+                System.out.println("\nLifecycle summary:");
+                printQuery(THREAD_SUMMARY_SQL);
+                System.out.println("\nGoverning snapshot:");
+                printQuery(GOVERNING_SNAPSHOT_SQL);
+
+                connection.commit();
+                System.out.println("\nScenario committed.");
+            } catch (Exception e) {
+                rollbackQuietly();
+                throw new IllegalStateException("Scenario rolled back: " + summarizeThrowable(e), e);
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+                setSearchPath();
+            }
+        }
+
+        private void handleVerify() throws Exception {
+            Path verifyPath = Path.of("ledger_verify.sql");
+            String sql = Files.readString(verifyPath);
+            boolean previousAutoCommit = connection.getAutoCommit();
+
+            try {
+                connection.setAutoCommit(false);
+                setSearchPath();
+                executeSqlScript(sql);
+                connection.commit();
+                System.out.println("PASS: " + verifyPath.getFileName());
+            } catch (Exception e) {
+                rollbackQuietly();
+                System.out.println("FAIL: " + summarizeThrowable(e));
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+                setSearchPath();
+            }
+        }
+
+        private Path resolveScenarioPath(String scenarioName) {
+            Path directPath = Path.of(scenarioName);
+            if (Files.isRegularFile(directPath)) {
+                return directPath;
+            }
+
+            String normalized = scenarioName.toLowerCase(Locale.ROOT);
+            if (normalized.endsWith(".sql")) {
+                Path sqlPath = Path.of(normalized);
+                if (Files.isRegularFile(sqlPath)) {
+                    return sqlPath;
+                }
+            }
+
+            Path prefixedPath = Path.of("ledger_" + normalized + ".sql");
+            if (Files.isRegularFile(prefixedPath)) {
+                return prefixedPath;
+            }
+
+            throw new IllegalArgumentException("Scenario file not found for: " + scenarioName);
         }
 
         private void handleRecordCommit(String line) throws SQLException {
@@ -321,7 +449,7 @@ public final class LedgerStudio {
 
             try (PreparedStatement ps = connection.prepareStatement(
                     "select act_id, act_seq " +
-                    "from api_ledger.record_fulfill(?, ?, ?, null)"
+                    "from api_ledger.record_fulfill(?, ?, ?)"
             )) {
                 ps.setString(1, streamCode);
                 ps.setString(2, participantCode);
@@ -341,76 +469,11 @@ public final class LedgerStudio {
 
             try (PreparedStatement ps = connection.prepareStatement(
                     "select act_id, act_seq " +
-                    "from api_ledger.record_restart(?, ?, ?, null)"
+                    "from api_ledger.record_restart(?, ?, ?)"
             )) {
                 ps.setString(1, streamCode);
                 ps.setString(2, participantCode);
                 ps.setLong(3, threadId);
-
-                try (ResultSet rs = ps.executeQuery()) {
-                    printResultSet(rs);
-                }
-            }
-        }
-
-        private void handleRecordRelation(String line) throws SQLException {
-            String[] parts = line.trim().split("\\s+");
-            if (parts.length != 9 && parts.length != 10) {
-                throw new IllegalArgumentException(
-                        "Usage: relate <stream_code> <participant_code> <thread_id> <source_kind> <source_key> <relation_type> <target_kind> <target_key> [ordinal_no]"
-                );
-            }
-
-            String streamCode = parts[1];
-            String participantCode = parts[2];
-            long threadId = parseLong(parts[3], "thread_id");
-            String sourceKind = parts[4];
-            String sourceKey = parts[5];
-            String relationType = parts[6];
-            String targetKind = parts[7];
-            String targetKey = parts[8];
-            Integer ordinalNo = (parts.length == 10) ? Integer.valueOf(parts[9]) : null;
-
-            try (PreparedStatement ps = connection.prepareStatement(
-                    "select relation_id, created_by_act_id, act_seq " +
-                    "from api_ledger.record_relation(?, ?, ?, ?, ?, ?, ?, ?, ?, null)"
-            )) {
-                ps.setString(1, streamCode);
-                ps.setString(2, participantCode);
-                ps.setLong(3, threadId);
-                ps.setString(4, sourceKind);
-                ps.setString(5, sourceKey);
-                ps.setString(6, relationType);
-                ps.setString(7, targetKind);
-                ps.setString(8, targetKey);
-
-                if (ordinalNo == null) {
-                    ps.setNull(9, java.sql.Types.INTEGER);
-                } else {
-                    ps.setInt(9, ordinalNo);
-                }
-
-                try (ResultSet rs = ps.executeQuery()) {
-                    printResultSet(rs);
-                }
-            }
-        }
-
-        private void handleRecordSupersede(String line) throws SQLException {
-            String[] parts = splitArgs(line, 5);
-            String streamCode = parts[1];
-            String participantCode = parts[2];
-            long supersedingThreadId = parseLong(parts[3], "superseding_thread_id");
-            long supersededThreadId = parseLong(parts[4], "superseded_thread_id");
-
-            try (PreparedStatement ps = connection.prepareStatement(
-                    "select act_id, act_seq, thread_supersession_id " +
-                    "from api_ledger.record_supersede(?, ?, ?, ?, null)"
-            )) {
-                ps.setString(1, streamCode);
-                ps.setString(2, participantCode);
-                ps.setLong(3, supersedingThreadId);
-                ps.setLong(4, supersededThreadId);
 
                 try (ResultSet rs = ps.executeQuery()) {
                     printResultSet(rs);
@@ -433,11 +496,30 @@ public final class LedgerStudio {
         }
 
         private void runSqlFile(String filePath) throws Exception {
-            String sql = java.nio.file.Files.readString(java.nio.file.Path.of(filePath));
+            executeSqlScript(Files.readString(Path.of(filePath)));
+            System.out.println("Executed file: " + filePath);
+        }
+
+        private void executeSqlScript(String sql) throws SQLException {
             try (Statement st = connection.createStatement()) {
                 st.execute(sql);
+                consumeRemainingResults(st);
             }
-            System.out.println("Executed file: " + filePath);
+        }
+
+        private void consumeRemainingResults(Statement st) throws SQLException {
+            while (true) {
+                ResultSet rs = st.getResultSet();
+                if (rs != null) {
+                    rs.close();
+                } else if (st.getUpdateCount() == -1) {
+                    break;
+                }
+
+                if (!st.getMoreResults() && st.getUpdateCount() == -1) {
+                    break;
+                }
+            }
         }
 
         private void printQuery(String sql) throws SQLException {
@@ -487,6 +569,20 @@ public final class LedgerStudio {
             }
         }
 
+        private void setSearchPath() throws SQLException {
+            try (Statement st = connection.createStatement()) {
+                st.execute("set search_path = " + DEFAULT_SCHEMA);
+            }
+        }
+
+        private void rollbackQuietly() {
+            try {
+                connection.rollback();
+            } catch (SQLException rollbackError) {
+                System.out.println("Rollback warning: " + rollbackError.getMessage());
+            }
+        }
+
         private boolean matches(String actual, String expected) {
             return actual.equalsIgnoreCase(expected);
         }
@@ -505,6 +601,27 @@ public final class LedgerStudio {
             } catch (NumberFormatException e) {
                 throw new IllegalArgumentException("Invalid " + label + ": " + value);
             }
+        }
+
+        private String summarizeThrowable(Throwable throwable) {
+            StringBuilder builder = new StringBuilder();
+            Throwable current = throwable;
+
+            while (current != null) {
+                String message = current.getMessage();
+                if (message != null && !message.isBlank()) {
+                    if (builder.length() > 0) {
+                        builder.append(" | ");
+                    }
+                    builder.append(message.replace('\n', ' '));
+                }
+                current = current.getCause();
+            }
+
+            if (builder.length() == 0) {
+                return throwable.getClass().getSimpleName();
+            }
+            return builder.toString();
         }
 
         private void shutdown() {

@@ -52,10 +52,10 @@ begin
 
     perform 1 from api_stream where stream_id = v_stream_id for update;
 
-    select coalesce(max(act_seq),0)+1
+    select coalesce(max(a.act_seq),0)+1
     into v_next_seq
-    from api_act
-    where stream_id = v_stream_id;
+    from api_act a
+    where a.stream_id = v_stream_id;
 
     insert into api_act(
         stream_id, participant_id, object_id,
@@ -81,7 +81,7 @@ begin
         act_id,
         v_participant_id
     )
-    returning thread_id into thread_id;
+    returning api_thread.thread_id into thread_id;
 
     update api_act
     set thread_id = record_commit.thread_id
@@ -128,10 +128,10 @@ begin
 
     perform 1 from api_stream where stream_id = v_stream_id for update;
 
-    select coalesce(max(act_seq),0)+1
+    select coalesce(max(a.act_seq),0)+1
     into v_next_seq
-    from api_act
-    where stream_id = v_stream_id;
+    from api_act a
+    where a.stream_id = v_stream_id;
 
     insert into api_act(
         stream_id, participant_id, object_id,
@@ -191,10 +191,10 @@ begin
 
     perform 1 from api_stream where stream_id = v_stream_id for update;
 
-    select coalesce(max(act_seq),0)+1
+    select coalesce(max(a.act_seq),0)+1
     into v_next_seq
-    from api_act
-    where stream_id = v_stream_id;
+    from api_act a
+    where a.stream_id = v_stream_id;
 
     insert into api_act(
         stream_id, participant_id, object_id,

@@ -31,18 +31,18 @@ $$;
 -- Verification: exactly one governing object
 ------------------------------------------------------------------------------
 
-perform assert_count(
-$$
-select *
-from v_registry_object
-where object_key='EP_HELLO'
-$$,
-1,
-'governing endpoint must exist'
-);
-
 do $$
 begin
+    perform assert_count(
+    $query$
+    select *
+    from v_registry_object
+    where object_key='EP_HELLO'
+    $query$,
+    1,
+    'governing endpoint must exist'
+    );
+
     raise notice 'VERIFICATION PASSED';
 end;
 $$;

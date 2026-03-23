@@ -6,13 +6,13 @@
 
 set search_path = api_ledger;
 
-truncate api_relation cascade;
-truncate api_thread_supersession cascade;
-truncate api_thread cascade;
-truncate api_act cascade;
-truncate api_object cascade;
-truncate api_participant cascade;
-truncate api_stream cascade;
+truncate api_relation restart identity cascade;
+truncate api_thread_supersession restart identity cascade;
+truncate api_thread restart identity cascade;
+truncate api_act restart identity cascade;
+truncate api_object restart identity cascade;
+truncate api_participant restart identity cascade;
+truncate api_stream restart identity cascade;
 
 insert into api_stream(stream_code, stream_title)
 values ('API','API Stream');
